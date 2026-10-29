@@ -752,3 +752,42 @@ pre {
     grid-column: 3;
   }
 }
+
+.sync-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 10px;
+  color: #94a2ae;
+  font-size: 12px;
+}
+
+.sync-mode select {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-schedule {
+  padding: 0 12px 6px;
+  color: #f5a524;
+  font-size: 12px;
+}
+
+.sync-schedule:empty {
+  display: none;
+}
+
+#schedule.active {
+  color: #f5a524;
+  border-color: #f5a524;
+}
+
+.message-dialog {
+  max-width: 460px;
+}
+
+.message-text {
+  color: #d9e4ee;
+  white-space: pre-line;
+  line-height: 1.45;
+}

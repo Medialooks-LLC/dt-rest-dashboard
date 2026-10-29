@@ -1,5 +1,5 @@
 import { DirectTakeClient } from '@local/directtake-js-client';
-import { createIcons, ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Settings, Square, Unlink, Wifi, X } from 'lucide';
+import { createIcons, Clock, ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Scissors, Settings, Square, Unlink, Wifi, X } from 'lucide';
 import './styles.css';
 
 const defaultBaseUrl = getInitialBaseUrl();
@@ -22,6 +22,8 @@ const state = {
   audioDevices: [],
   resources: null,
   sync: null,
+  settings: null,
+  schedule: null,
   channelPreviews: new Map(),
   channelPresetNames: new Map(),
   selectedChannel: null,
@@ -99,6 +101,7 @@ document.querySelector('#app').innerHTML = `
           <button id="recStart" class="danger"><i data-lucide="play"></i><span>Rec</span></button>
           <button id="recPause"><i data-lucide="pause"></i><span>Pause</span></button>
           <button id="recStop"><i data-lucide="square"></i><span>Stop</span></button>
+          <button id="recSplit" title="Continue the recording of the selected channel in new files"><i data-lucide="scissors"></i><span>Split</span></button>
         </section>
 
         <section class="system-grid">
@@ -107,12 +110,25 @@ document.querySelector('#app').innerHTML = `
             <div id="resources" class="resources-view"></div>
           </section>
           <section class="panel">
-            <div class="panel-title">Synchronous Recording</div>
+            <div class="panel-header">
+              <div class="panel-title">Synchronous Recording</div>
+              <button id="schedule" class="icon-button" title="Schedule"><i data-lucide="clock"></i></button>
+            </div>
             <div id="syncState" class="sync-state"></div>
+            <div id="syncSchedule" class="sync-schedule"></div>
+            <label class="sync-mode">
+              <span>Mode</span>
+              <select id="syncMode" title="How the channels marked In Sync are kept together. It can't be changed during a synchronous recording.">
+                <option value="0">Frame lock-step (any source)</option>
+                <option value="1">Match by camera timecode (SDI)</option>
+                <option value="2">Independent channels, common start and stop</option>
+              </select>
+            </label>
             <div class="sync-actions">
               <button id="syncStart"><i data-lucide="play"></i><span>Start</span></button>
               <button id="syncPause"><i data-lucide="pause"></i><span>Pause</span></button>
               <button id="syncStop"><i data-lucide="square"></i><span>Stop</span></button>
+              <button id="syncSplit" title="Continue all synchronized channels in new files, on the same frame"><i data-lucide="scissors"></i><span>Split</span></button>
             </div>
           </section>
         </section>
@@ -133,7 +149,7 @@ document.querySelector('#app').innerHTML = `
   </main>
 `;
 
-createIcons({ icons: { ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Settings, Square, Unlink, Wifi, X } });
+createIcons({ icons: { Clock, ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Scissors, Settings, Square, Unlink, Wifi, X } });
 
 const elements = {
   baseUrl: document.querySelector('#baseUrl'),
@@ -145,6 +161,9 @@ const elements = {
   channels: document.querySelector('#channels'),
   resources: document.querySelector('#resources'),
   syncState: document.querySelector('#syncState'),
+  syncMode: document.querySelector('#syncMode'),
+  syncSchedule: document.querySelector('#syncSchedule'),
+  schedule: document.querySelector('#schedule'),
   log: document.querySelector('#log'),
   modalRoot: document.querySelector('#modalRoot')
 };
@@ -166,9 +185,16 @@ document.querySelector('#syncOff').addEventListener('click', () => runSelectedAc
 document.querySelector('#recStart').addEventListener('click', () => runSelectedAction('Start recording', () => state.client.startChannelRecording(requireChannel())));
 document.querySelector('#recPause').addEventListener('click', () => runSelectedAction('Pause recording', () => state.client.pauseChannelRecording(requireChannel())));
 document.querySelector('#recStop').addEventListener('click', () => runSelectedAction('Stop recording', () => state.client.stopChannelRecording(requireChannel())));
+document.querySelector('#recSplit').addEventListener('click', () => runSelectedAction('Split recording', () => state.client.splitChannelRecording(requireChannel())));
 document.querySelector('#syncStart').addEventListener('click', () => runAction('Start synchronous recording', () => state.client.startSyncRecording()));
 document.querySelector('#syncPause').addEventListener('click', () => runAction('Pause synchronous recording', () => state.client.pauseSyncRecording()));
 document.querySelector('#syncStop').addEventListener('click', () => runAction('Stop synchronous recording', () => state.client.stopSyncRecording()));
+document.querySelector('#syncSplit').addEventListener('click', () => runAction('Split synchronous recording', () => state.client.splitSyncRecording()));
+elements.syncMode.addEventListener('change', () => {
+  const mode = Number(elements.syncMode.value);
+  runAction(`Synchronization mode ${elements.syncMode.selectedOptions[0]?.textContent ?? mode}`, () => state.client.updateSettings({ SyncModeIndex: mode }));
+});
+elements.schedule.addEventListener('click', openScheduleDialog);
 
 document.querySelectorAll('[data-grid]').forEach((button) => {
   button.addEventListener('click', () => runAction(`Set grid ${button.dataset.grid}`, () => state.client.setChannelCount(Number(button.dataset.grid))));
@@ -217,6 +243,11 @@ async function refresh() {
   state.audioDevices = toDeviceList(audioDevices, 'Audio');
   state.resources = resources;
   state.sync = sync;
+  // preferences and schedule are optional: an older Direct Take without them still connects
+  [state.settings, state.schedule] = await Promise.all([
+    state.client.getSettings().catch(() => null),
+    state.client.getSchedule().catch(() => null)
+  ]);
 
   if (!state.channels.some((channel) => channel.Index === state.selectedChannel)) {
     state.selectedChannel = state.channels[0]?.Index ?? null;
@@ -238,16 +269,107 @@ async function runAction(label, action, { skipRefresh = false } = {}) {
   try {
     await action();
     pushLog(`${label}: ok`);
+    renderLog();
     if (!skipRefresh) {
       await refresh();
     }
   } catch (error) {
     pushLog(`${label}: ${error.message}`);
     renderLog();
+    // Direct Take answers 409 while one of its message boxes is open: show it here so it can be answered
+    if (error.status === 409 && /message box/i.test(String(error.body ?? ''))) {
+      await openMessageBoxDialog();
+    }
   }
 }
 
-function openSettingsDialog() {
+async function openMessageBoxDialog() {
+  let info;
+  try {
+    info = await state.client.getDialog();
+  } catch (error) {
+    pushLog(`Message box: ${error.message}`);
+    renderLog();
+    return;
+  }
+  if (!info || typeof info !== 'object' || !info.IsDialog) {
+    return;
+  }
+  const buttons = info.DialogButtons === 'Yes_No'
+    ? '<button type="button" data-dialog-answer="no"><span>No</span></button><button type="button" data-dialog-answer="yes"><span>Yes</span></button>'
+    : '<button type="button" data-dialog-answer="ok"><span>OK</span></button>';
+  showDialog(`
+    <div class="dialog message-dialog">
+      <div class="dialog-header">
+        <div class="dialog-title">Direct Take</div>
+      </div>
+      <div class="message-text">${escapeHtml(info.DialogContent ?? '')}</div>
+      <div class="dialog-actions">${buttons}</div>
+    </div>
+  `);
+  elements.modalRoot.querySelectorAll('[data-dialog-answer]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      closeDialog();
+      await runAction(`Message box: ${button.dataset.dialogAnswer}`, () => state.client.actOnDialog(button.dataset.dialogAnswer));
+    });
+  });
+}
+
+function openScheduleDialog() {
+  const schedule = state.schedule ?? {};
+  const isAll = schedule.ScheduleType === 'All channels';
+  showDialog(`
+    <form id="scheduleForm" class="dialog">
+      <div class="dialog-header">
+        <div class="dialog-title">Schedule</div>
+        <button type="button" class="icon-button" data-close-dialog title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <label>
+        <span>Start at</span>
+        <input name="startTime" type="time" step="1" value="${escapeHtml(schedule.StartTime ?? '')}" />
+      </label>
+      <label>
+        <span>Stop at</span>
+        <input name="stopTime" type="time" step="1" value="${escapeHtml(schedule.StopTime ?? '')}" />
+      </label>
+      <label>
+        <span>Channels</span>
+        <select name="scheduleType">
+          <option value="In Sync only"${isAll ? '' : ' selected'}>In Sync only</option>
+          <option value="All channels"${isAll ? ' selected' : ''}>All channels</option>
+        </select>
+      </label>
+      <div class="field-hint">Times of day on the Direct Take computer. An active schedule repeats every day. Leave a time empty to skip it.</div>
+      <div class="dialog-actions">
+        <button type="button" data-schedule-off><i data-lucide="x"></i><span>Turn off</span></button>
+        <button type="submit"><i data-lucide="clock"></i><span>Schedule</span></button>
+      </div>
+    </form>
+  `);
+  document.querySelector('#scheduleForm').addEventListener('submit', submitScheduleForm);
+  elements.modalRoot.querySelector('[data-schedule-off]').addEventListener('click', async () => {
+    closeDialog();
+    await runAction('Schedule off', () => state.client.setSchedule({ IsEnabled: false, StartTime: null, StopTime: null }));
+  });
+}
+
+async function submitScheduleForm(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  // a time input gives HH:mm when the seconds are 00; Direct Take expects HH:mm:ss
+  const toTime = (value) => (value ? (String(value).length === 5 ? `${value}:00` : String(value)) : null);
+  const schedule = {
+    IsEnabled: true,
+    StartTime: toTime(form.get('startTime')),
+    StopTime: toTime(form.get('stopTime')),
+    ScheduleType: String(form.get('scheduleType'))
+  };
+  closeDialog();
+  await runAction('Schedule', () => state.client.setSchedule(schedule));
+}
+
+async function openSettingsDialog() {
+  const appSettings = await state.client.getSettings().catch(() => null);
   showDialog(`
     <form id="settingsForm" class="dialog">
       <div class="dialog-header">
@@ -269,6 +391,7 @@ function openSettingsDialog() {
         <input name="channelStatsUpdateSeconds" type="number" min="0" max="3600" step="1" value="${escapeHtml(state.channelStatsUpdateSeconds)}" />
       </label>
       <div class="field-hint">Use 0 to disable automatic recording stat updates.</div>
+      ${renderGpuDecodingField(appSettings)}
       <div class="dialog-actions">
         <button type="button" data-close-dialog><i data-lucide="x"></i><span>Cancel</span></button>
         <button type="submit"><i data-lucide="save"></i><span>Save Settings</span></button>
@@ -276,10 +399,10 @@ function openSettingsDialog() {
     </form>
   `);
 
-  document.querySelector('#settingsForm').addEventListener('submit', submitSettingsForm);
+  document.querySelector('#settingsForm').addEventListener('submit', (event) => submitSettingsForm(event, appSettings));
 }
 
-function submitSettingsForm(event) {
+async function submitSettingsForm(event, appSettings) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   const previewValue = clampNumber(Number(form.get('previewUpdateSeconds')), 0, 3600);
@@ -298,6 +421,31 @@ function submitSettingsForm(event) {
   scheduleChannelStatsUpdates();
   pushLog(`Settings: preview ${formatInterval(previewValue)}, resources ${formatInterval(resourceValue)}, channel stats ${formatInterval(channelStatsValue)}`);
   renderLog();
+  await applyGpuDecoding(form, appSettings);
+}
+
+// GPU decoding is a Direct Take preference (Preferences > Decode network streams on GPU); older versions do not report it
+function renderGpuDecodingField(appSettings) {
+  if (!appSettings || typeof appSettings.GpuDecoding !== 'boolean') {
+    return '';
+  }
+  return `
+      <div class="checkbox-row">
+        <input id="gpuDecoding" name="gpuDecoding" type="checkbox" ${appSettings.GpuDecoding ? 'checked' : ''} />
+        <label for="gpuDecoding">Decode network streams on GPU</label>
+      </div>
+      <div class="field-hint">A Direct Take setting: NVIDIA NVDEC decodes the network stream sources opened after the change.</div>
+  `;
+}
+
+async function applyGpuDecoding(form, appSettings) {
+  if (!appSettings || typeof appSettings.GpuDecoding !== 'boolean') {
+    return;
+  }
+  const gpuDecoding = form.get('gpuDecoding') === 'on';
+  if (gpuDecoding !== appSettings.GpuDecoding) {
+    await runAction(`GPU decoding ${gpuDecoding ? 'on' : 'off'}`, () => state.client.updateSettings({ GpuDecoding: gpuDecoding }), { skipRefresh: true });
+  }
 }
 
 async function openSourceEditor(summary) {
@@ -577,6 +725,7 @@ async function openChannelDialog(channelIndex) {
             <button type="button" class="danger" data-channel-action="rec-start"><i data-lucide="play"></i><span>Rec</span></button>
             <button type="button" data-channel-action="rec-pause"><i data-lucide="pause"></i><span>Pause</span></button>
             <button type="button" data-channel-action="rec-stop"><i data-lucide="square"></i><span>Stop</span></button>
+            <button type="button" data-channel-action="rec-split"><i data-lucide="scissors"></i><span>Split</span></button>
           </div>
         </div>
       </div>
@@ -860,7 +1009,8 @@ async function runChannelDialogAction(channelIndex, action) {
   const actions = {
     'rec-start': () => state.client.startChannelRecording(channelIndex),
     'rec-pause': () => state.client.pauseChannelRecording(channelIndex),
-    'rec-stop': () => state.client.stopChannelRecording(channelIndex)
+    'rec-stop': () => state.client.stopChannelRecording(channelIndex),
+    'rec-split': () => state.client.splitChannelRecording(channelIndex)
   };
 
   await runAction(`Channel ${channelIndex} ${action}`, actions[action]);
@@ -872,7 +1022,7 @@ function showDialog(content) {
   elements.modalRoot.querySelectorAll('[data-close-dialog]').forEach((button) => {
     button.addEventListener('click', closeDialog);
   });
-  createIcons({ icons: { ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Settings, Square, Unlink, Wifi, X } });
+  createIcons({ icons: { Clock, ExternalLink, Link, Pause, Play, Plus, Radio, RefreshCw, RotateCcw, Save, Scissors, Settings, Square, Unlink, Wifi, X } });
 }
 
 function closeDialog() {
@@ -956,7 +1106,21 @@ function render() {
   elements.syncState.textContent = state.sync
     ? `Recording: ${Boolean(state.sync.IsSyncRecording)} | Paused: ${Boolean(state.sync.IsSyncRecordingPause)}`
     : 'No sync state loaded';
+  elements.syncSchedule.textContent = formatSchedule(state.schedule);
+  const syncMode = state.settings?.SyncModeIndex;
+  elements.syncMode.value = syncMode === undefined || syncMode === null ? '0' : String(syncMode);
+  elements.syncMode.disabled = !state.settings || Boolean(state.sync?.IsSyncRecording);
+  elements.schedule.classList.toggle('active', Boolean(state.schedule?.IsEnabled));
   renderLog();
+}
+
+function formatSchedule(schedule) {
+  if (!schedule?.IsEnabled) {
+    return '';
+  }
+  const start = schedule.StartTime ? `start ${schedule.StartTime}` : '';
+  const stop = schedule.StopTime ? `stop ${schedule.StopTime}` : '';
+  return `Schedule: ${[start, stop].filter(Boolean).join(', ')}, ${schedule.ScheduleType}`;
 }
 
 function renderList(container, items, selectedIndex, kind, onSelect = () => {}, onEdit = null, dragKind = null) {
@@ -1489,9 +1653,10 @@ function normalizeResources(resources) {
     totalCpu: Number(values.TotalCPU) || 0,
     currentRam: Number(values.CurrentRAM) || 0,
     totalRam: Number(values.TotalRAM) || 0,
+    // Direct Take reports the free space of each drive; the cards show how full the drive is
     disks: toList(values.DiskInfo).map((disk) => ({
       key: disk.Key,
-      percent: parsePercent(disk.Value)
+      percent: 100 - parsePercent(disk.Value)
     })).filter((disk) => disk.key)
   };
 }

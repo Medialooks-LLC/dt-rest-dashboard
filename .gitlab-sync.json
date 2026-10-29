@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "sourceProject": "bujmakov/dt-rest-dashboard",
+  "sourceCommit": "dcfd05639d58e46ceaffb68b4f4f5a49444a7f47",
+  "snapshotSha256": "bbff48f409a424c923474a427034525d5edaa3e3c3b41b737e3a4bdd662fcb9b",
+  "managedFiles": [
+    ".gitignore",
+    "README.md",
+    "directtake-js-client/README.md",
+    "directtake-js-client/package-lock.json",
+    "directtake-js-client/package.json",
+    "directtake-js-client/src/index.js",
+    "directtake-js-client/test/direct-take-client.test.js",
+    "directtake-web-dashboard/dist/assets/index-CDRIGZTU.css",
+    "directtake-web-dashboard/dist/assets/index-D8cnvPHE.js",
+    "directtake-web-dashboard/dist/index.html",
+    "directtake-web-dashboard/index.html",
+    "directtake-web-dashboard/package-lock.json",
+    "directtake-web-dashboard/package.json",
+    "directtake-web-dashboard/src/main.js",
+    "directtake-web-dashboard/src/styles.css",
+    "directtake-web-dashboard/vite.config.js"
+  ]
+}

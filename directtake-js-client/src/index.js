@@ -85,8 +85,10 @@ export class DirectTakeClient {
     return this.get('app/dialog', options);
   }
 
+  // action: 'ok', 'yes', 'no' or 'cancel' (true means 'ok', false means 'cancel')
   actOnDialog(action, options) {
-    const normalized = action === true || action === 'ok' ? 'ok' : 'cancel';
+    const value = action === true ? 'ok' : action === false ? 'cancel' : String(action ?? '').trim().toLowerCase();
+    const normalized = ['ok', 'yes', 'no', 'cancel'].includes(value) ? value : 'cancel';
     return this.put(`app/dialog/${normalized}`, {}, options);
   }
 
@@ -226,6 +228,10 @@ export class DirectTakeClient {
     return this.put(`channels/${index}/rec-stop`, {}, options);
   }
 
+  splitChannelRecording(index, options) {
+    return this.put(`channels/${index}/rec-split`, {}, options);
+  }
+
   startSyncRecording(options) {
     return this.put('channels/sync-rec-start', {}, options);
   }
@@ -236,6 +242,10 @@ export class DirectTakeClient {
 
   stopSyncRecording(options) {
     return this.put('channels/sync-rec-stop', {}, options);
+  }
+
+  splitSyncRecording(options) {
+    return this.put('channels/sync-rec-split', {}, options);
   }
 
   get(path, options) {

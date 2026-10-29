@@ -36,3 +36,47 @@ test('relative base URLs resolve against the browser location', async () => {
 
   assert.deepEqual(sources, []);
 });
+
+test('split methods send PUT to rec-split and sync-rec-split', async () => {
+  const calls = [];
+  const client = new DirectTakeClient({
+    baseUrl: 'http://localhost:9531/api/',
+    fetchImpl: (input, init) => {
+      calls.push([init.method, String(input)]);
+      return Promise.resolve(new Response(''));
+    }
+  });
+
+  await client.splitChannelRecording(2);
+  await client.splitSyncRecording();
+
+  assert.deepEqual(calls, [
+    ['PUT', 'http://localhost:9531/api/channels/2/rec-split'],
+    ['PUT', 'http://localhost:9531/api/channels/sync-rec-split']
+  ]);
+});
+
+test('actOnDialog sends ok, yes, no and cancel, and refuses unknown answers', async () => {
+  const paths = [];
+  const client = new DirectTakeClient({
+    baseUrl: 'http://localhost:9531/api/',
+    fetchImpl: (input) => {
+      paths.push(new URL(String(input)).pathname);
+      return Promise.resolve(new Response(''));
+    }
+  });
+
+  for (const action of ['ok', 'Yes', 'no', 'cancel', true, false, 'abc']) {
+    await client.actOnDialog(action);
+  }
+
+  assert.deepEqual(paths, [
+    '/api/app/dialog/ok',
+    '/api/app/dialog/yes',
+    '/api/app/dialog/no',
+    '/api/app/dialog/cancel',
+    '/api/app/dialog/ok',
+    '/api/app/dialog/cancel',
+    '/api/app/dialog/cancel'
+  ]);
+});
