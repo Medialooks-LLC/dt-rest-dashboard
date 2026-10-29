@@ -2,6 +2,8 @@
 
 This workspace contains a small browser dashboard and a local JavaScript client for the Medialooks Direct Take REST API.
 
+![Direct Take web dashboard: four football cameras, two of them in a synchronous recording](docs/images/dashboard.jpg)
+
 ## Projects
 
 - `directtake-js-client` - dependency-free ESM client for the Direct Take REST API.
